@@ -15,7 +15,7 @@ class DocumentGallery {
 	 * Takes values passed from attributes and returns suitable HTML to represent
 	 * all valid attachments requested.
 	 *
-	 * @param array $atts Arguments from the user.
+	 * @param mixed[] $atts Arguments from the user.
 	 *
 	 * @return string HTML for the Document Gallery.
 	 */
@@ -33,7 +33,14 @@ class DocumentGallery {
 	 * Enqueue standard DG CSS.
 	 */
 	public static function enqueueGalleryStyle() {
-		wp_enqueue_style( 'document-gallery', DG_URL . 'assets/css/style.css', null, DG_VERSION );
+		DG_Util::enqueueAsset( 'document-gallery', 'assets/css/style.css' );
+	}
+
+	/**
+	 * Enqueue script for Document Gallery frontend.
+	 */
+	public static function enqueueGalleryScript() {
+		DG_Util::enqueueAsset( 'document-gallery', 'assets/js/gallery.js', array( 'jquery' ) );
 	}
 
 	/**
@@ -45,6 +52,13 @@ class DocumentGallery {
 		if ( ! empty( $dg_options['css']['text'] ) ) {
 			echo '<style type="text/css">' . $dg_options['css']['text'] . '</style>' . PHP_EOL;
 		}
+
+		// need AJAX URL variable in frontend
+		?>
+		<script type="text/javascript">
+			ajaxurl = typeof(ajaxurl) !== 'string' ? '<?php echo admin_url( 'admin-ajax.php' ); ?>' : ajaxurl;
+		</script>
+		<?php
 	}
 
 	/*==========================================================================
@@ -65,7 +79,7 @@ class DocumentGallery {
 	/**
 	 * @param int $blog ID of the blog to be retrieved in multisite env.
 	 *
-	 * @return array Options for the blog.
+	 * @return mixed[] Options for the blog.
 	 */
 	public static function getOptions( $blog = null ) {
 		global $dg_options;
@@ -76,7 +90,7 @@ class DocumentGallery {
 	}
 
 	/**
-	 * @param array $options
+	 * @param mixed[] $options
 	 * @param int $blog ID of the blog to be set in multisite env.
 	 */
 	public static function setOptions( $options, $blog = null ) {
@@ -105,7 +119,7 @@ class DocumentGallery {
 	 */
 	public static function addValidation() {
 		add_filter( 'pre_update_option_' . DG_OPTION_NAME, array(
-			'DocumentGallery',
+			__CLASS__,
 			'validateOptionsStructure'
 		), 10, 2 );
 	}
@@ -113,29 +127,33 @@ class DocumentGallery {
 	/**
 	 * Checks whether the given options match the option schema.
 	 *
-	 * @param array $new The new options to be validated.
-	 * @param array $old The old options.
+	 * @param mixed[] $new The new options to be validated.
+	 * @param mixed[] $old The old options.
 	 *
-	 * @return array The options to be saved.
+	 * @return mixed[] The options to be saved.
 	 */
 	public static function validateOptionsStructure( $new, $old ) {
 		if ( self::isValidOptionsStructure( $new ) ) {
 			$ret = $new;
 		} else {
 			$ret = $old;
-			DG_Logger::writeLog( DG_LogLevel::Error, 'Attempted to save invalid options.' . PHP_EOL . print_r( $new, true ), true, true );
+			DG_Logger::writeLog(
+				DG_LogLevel::Error,
+				'Attempted to save invalid options.' . PHP_EOL . preg_replace( '/\s+/', ' ', print_r( $new, true ) ),
+				true,
+				true );
 		}
 
 		return $ret;
 	}
 
 	/**
-	 * @param array|unknown $o The options structure to validate.
-	 * @param array $schema The schema to validate against (note that only keys matter -- non-array values are ignored).
+	 * @param mixed[]|mixed $o The options structure to validate.
+	 * @param mixed[] $schema The schema to validate against (note that only keys matter -- non-array values are ignored).
 	 *
 	 * @return bool Whether the given options structure matches the schema.
 	 */
-	private static function isValidOptionsStructure( $o, $schema = null ) {
+	public static function isValidOptionsStructure( $o, $schema = null ) {
 		if ( is_null( $schema ) ) {
 			$schema = DG_Setup::getDefaultOptions( true );
 		}
@@ -168,16 +186,17 @@ class DocumentGallery {
 	 * @return string The local time in the WP date/time format.
 	 */
 	public static function localDateTimeFromTimestamp( $timestamp ) {
-		static $gmt_offet = null;
+		static $gmt_offset = null;
 		static $wp_date_format = null;
 		static $wp_time_format = null;
-		if ( is_null( $gmt_offet ) ) {
-			$gmt_offet      = get_option( 'gmt_offset' );
+		if ( is_null( $gmt_offset ) ) {
+			$gmt_offset     = get_option( 'gmt_offset' );
 			$wp_date_format = get_option( 'date_format' );
 			$wp_time_format = get_option( 'time_format' );
 		}
 
-		return '<span class="nowrap">' . date_i18n( $wp_date_format, $timestamp + $gmt_offet * 3600 ) . '</span> <span class="nowrap">' . date_i18n( $wp_time_format, $timestamp + $gmt_offet * 3600 ) . '</span>';
+		return '<span class="nowrap">' . date_i18n( $wp_date_format, $timestamp + $gmt_offset * 3600 ) . '</span> ' .
+		       '<span class="nowrap">' . date_i18n( $wp_time_format, $timestamp + $gmt_offset * 3600 ) . '</span>';
 	}
 
 	/**

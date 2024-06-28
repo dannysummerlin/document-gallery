@@ -13,21 +13,19 @@ class DG_Setup {
 	 *
 	 * @param $skeleton bool When true, expensive values are not calculated. Only keys may be trusted when returning skeleton.
 	 *
-	 * @return array Contains default options for DG.
+	 * @return mixed[][] Contains default options for DG.
 	 */
 	public static function getDefaultOptions( $skeleton = false ) {
 		include_once DG_PATH . 'inc/class-thumber.php';
 
 		$gs = $donate_link = null;
 		if ( ! $skeleton ) {
-			$gs          = DG_Thumber::getGhostscriptExecutable();
+			$gs          = DG_GhostscriptThumber::getGhostscriptExecutable();
 			$donate_link = self::getDonateLink();
 		}
 
 		return array(
 			'thumber'    => array(
-				// cached thumbnails, keyed by post ID
-				'thumbs'  => array(),
 				// Ghostscript path
 				'gs'      => $gs,
 				// which thumbnail generation methods are available
@@ -35,35 +33,44 @@ class DG_Setup {
 				// max width to generate thumbnails
 				'width'   => 200,
 				// max height to generate thumbnails
-				'height'  => 200,
-				// time after which to quite trying to generate new thumbanils for gallery
-				'timeout' => 30
+				'height'  => 200
+			),
+			'thumber-co' => array(
+				'uid'           => null,
+				'secret'        => null,
+				'subscription'  => array(),
+				'direct_upload' => false,
+				'mime_types'    => array()
 			),
 			'gallery'    => array(
 				// default: link directly to file (true to link to attachment pg)
 				'attachment_pg' => false,
+				// # of columns to be used in gallery
+				'columns'       => 4,
 				// include the attachment description in output
 				'descriptions'  => false,
 				// include thumbnail of actual document in gallery display
 				'fancy'         => true,
+				// the max number of thumbnails to return
+				'limit'         => -1,
 				// comma-delimited list of all mime types to be included
 				'mime_types'    => implode( ',', self::getDefaultMimeTypes() ),
+				// whether to open documents in new window
+				'new_window'    => false,
 				// ascending/descending order for included documents
 				'order'         => 'ASC',
 				// which property to order by
 				'orderby'       => 'menu_order',
-				// AND or OR
-				'relation'      => 'AND',
+				// whether to paginate galleries with a "limit"
+				'paginate'      => true,
 				// the status the post must be in when returned by DG
 				'post_status'   => 'any',
 				// the type of post to be returned
 				'post_type'     => 'attachment',
-				// the max number of thumbnails to return
-				'limit'         => - 1,
-				// # of columns to be used in gallery
-				'columns'       => 4,
-				// whether to open documents in new window
-				'new_window'    => false
+				// AND or OR
+				'relation'      => 'AND',
+				// how many documents to skip
+				'skip'          => 0
 			),
 			'css'        => array(
 				// plain text of CSS to be edited by user
@@ -72,6 +79,8 @@ class DG_Setup {
 			'meta'       => array(
 				// current DG version
 				'version'     => DG_VERSION,
+				// items per page at Thumbnail Management tab
+				'items_per_page' => 10,
 				// URL to donate to plugin development
 				'donate_link' => $donate_link
 			),
@@ -81,14 +90,12 @@ class DG_Setup {
 				'enabled'        => defined( 'WP_DEBUG' ) && WP_DEBUG,
 				// max age of log entry (days)
 				'purge_interval' => 7
-			),
-			// whether to validate DG option structure on save
-			'validation' => false
+			)
 		);
 	}
 
 	/**
-	 * @return array The default MIME types to include in gallery.
+	 * @return string[] The default MIME types to include in gallery.
 	 */
 	public static function getDefaultMimeTypes() {
 		return array( 'application', 'video', 'text', 'audio', 'image' );
@@ -99,9 +106,15 @@ class DG_Setup {
 	 */
 	public static function maybeUpdate() {
 		global $dg_options;
+		if ( is_null( $dg_options ) ) {
+			return;
+		}
 
-		// do update
-		if ( ! is_null( $dg_options ) && ( isset( $dg_options['version'] ) || DG_VERSION !== $dg_options['meta']['version'] ) ) {
+		// version has historically been in two locations -- must check both to continue supporting upgrading from those old versions
+		$old_version = isset( $dg_options['version'] ) ? $dg_options['version'] : $dg_options['meta']['version'];
+		if ( ! is_null( $dg_options ) && DG_VERSION !== $old_version ) {
+			DG_Logger::writeLog( DG_LogLevel::Detail, "Upgrading Document Gallery from version $old_version to " . DG_VERSION );
+
 			$blogs = array( null );
 
 			if ( is_multisite() ) {
@@ -133,18 +146,18 @@ class DG_Setup {
 		self::threePointOne( $options );
 		self::threePointTwo( $options );
 		self::threePointThree( $options );
+		self::threePointFour( $options );
+		self::threePointFive( $options );
+		self::fourPointZero( $options );
+		self::fourPointOne( $options );
+		self::fourPointOnePointFive( $options );
 
 		// update plugin meta data
 		$options['meta']['version']     = DG_VERSION;
 		$options['meta']['donate_link'] = self::getDonateLink();
 
 		// remove previously-failed thumbs
-		$thumbs = $options['thumber']['thumbs'];
-		foreach ( $thumbs as $k => $v ) {
-			if ( empty( $v['thumber'] ) ) {
-				unset( $options['thumber']['thumbs'][ $k ] );
-			}
-		}
+		DG_Thumb::purgeFailedThumbs();
 
 		DocumentGallery::setOptions( $options, $blog );
 	}
@@ -156,7 +169,7 @@ class DG_Setup {
 	 *
 	 * The defaults sub-branch in the gallery branch is being flattened into its parent.
 	 *
-	 * @param array $options The options to be modified.
+	 * @param mixed[][] $options The options to be modified.
 	 */
 	private static function twoPointTwo( &$options ) {
 		if ( isset( $options['version'] ) && version_compare( $options['version'], '2.2', '<' ) ) {
@@ -195,7 +208,7 @@ class DG_Setup {
 	/**
 	 * Some of the data previously stored along with custom CSS is no longer needed.
 	 *
-	 * @param array $options The options to be modified.
+	 * @param mixed[][] $options The options to be modified.
 	 */
 	private static function twoPointThree( &$options ) {
 		if ( isset( $options['version'] ) && version_compare( $options['version'], '2.3', '<' ) ) {
@@ -233,7 +246,7 @@ class DG_Setup {
 	 * Added "columns" attribute.
 	 * Added "mime_types" attribute.
 	 *
-	 * @param array $options The options to be modified.
+	 * @param mixed[][] $options The options to be modified.
 	 */
 	private static function threePointZeroBeta( &$options ) {
 		if ( isset( $options['version'] ) /*&& version_compare($options['version'], '3.0.0-beta', '<')*/ ) {
@@ -262,7 +275,7 @@ class DG_Setup {
 	 *
 	 * Added scheduled log purge event to handle rollovers.
 	 *
-	 * @param array $options The options to be modified.
+	 * @param mixed[][] $options The options to be modified.
 	 */
 	private static function threePointOne( &$options ) {
 		if ( version_compare( $options['meta']['version'], '3.1', '<' ) ) {
@@ -280,7 +293,7 @@ class DG_Setup {
 	/**
 	 * Adds 'new_window' under gallery options.
 	 *
-	 * @param array $options The options to be modified.
+	 * @param mixed[][] $options The options to be modified.
 	 */
 	private static function threePointTwo( &$options ) {
 		if ( version_compare( $options['meta']['version'], '3.2', '<' ) ) {
@@ -291,7 +304,7 @@ class DG_Setup {
 	/**
 	 * Removes minified CSS. Fixing corrupt data for boolean fields that may have gotten strings.
 	 *
-	 * @param array $options The options to be modified.
+	 * @param mixed[][] $options The options to be modified.
 	 */
 	private static function threePointThree( &$options ) {
 		if ( version_compare( $options['meta']['version'], '3.3', '<' ) ) {
@@ -309,6 +322,127 @@ class DG_Setup {
 					$options[$class] = DG_Util::toBool( $options[$class], $block );
 				}
 			}
+		}
+	}
+
+	/**
+	 * Removes the validation option. Validation is now non-optional.
+	 *
+	 * @param mixed[][] $options The options to be modified.
+	 */
+	private static function threePointFour( &$options ) {
+		if ( version_compare( $options['meta']['version'], '3.4', '<' ) ) {
+			unset( $options['validation'] );
+
+			if ( ! DocumentGallery::isValidOptionsStructure( $options ) ) {
+				DG_Logger::writeLog(
+					DG_LogLevel::Error,
+					'Found invalid options structure. Reverting to default options.',
+					false,
+					true );
+				$options = self::getDefaultOptions();
+			}
+		}
+	}
+
+	/**
+	 * There is no longer a concept of gallery load timeout. Missing thumbnails are asynchronously generated after
+	 * a gallery is first rendered via AJAX requests.
+	 *
+	 * @param mixed[][] $options The options to be modified.
+	 */
+	private static function threePointFive( &$options ) {
+		if ( version_compare( $options['meta']['version'], '3.5', '<' ) ) {
+			unset( $options['thumber']['timeout'] );
+		}
+	}
+
+	/**
+	 * Adds the meta items_per_page default value.
+	 * Paginate & skip options were added.
+	 * Moving cached thumbs into postmeta table.
+	 *
+	 * @param mixed[][] $options The options to be modified.
+	 */
+	private static function  fourPointZero( &$options ) {
+		if ( version_compare( $options['meta']['version'], '4.0', '<' ) ) {
+			$options['gallery']['paginate'] = true;
+			$options['gallery']['skip'] = 0;
+			$options['meta']['items_per_page'] = 10;
+
+			$upload_dir = wp_upload_dir();
+			$upload_len = strlen( $upload_dir['basedir'] );
+			$dimensions = $options['thumber']['width'] . 'x' . $options['thumber']['height'];
+			foreach ( $options['thumber']['thumbs'] as $id => $thumb ) {
+				$thumb_obj = new DG_Thumb();
+				$thumb_obj->setPostId( $id );
+				$thumb_obj->setTimestamp( $thumb['timestamp'] );
+				$thumb_obj->setDimensions( $dimensions );
+				if ( isset( $thumb['thumb_path'] ) ) {
+					$thumb_obj->setRelativePath( substr( $thumb['thumb_path'], $upload_len + 1 ) );
+					$thumb_obj->setGenerator( DG_Util::callableToString( $thumb['thumber'] ) );
+				}
+
+				$thumb_obj->save();
+			}
+
+			unset( $options['thumber']['thumbs'] );
+		}
+	}
+
+	/**
+	 * Adds integration w/ Thumber.co service.
+	 * Update existing thumbs to match new thumbnail generation architecture.
+	 *
+	 * @param mixed[][] $options The options to be modified.
+	 */
+	private static function fourPointOne( &$options ) {
+		if ( version_compare( $options['meta']['version'], '4.1', '<' ) ) {
+			$options['thumber']['active']['thumber-co'] = false;
+			$options['thumber-co'] = array(
+					'uid'           => null,
+					'secret'        => null,
+					'subscription'  => array(),
+					'direct_upload' => false,
+					'mime_types'    => array()
+			);
+
+			$old_thumbs = DG_Thumb::getThumbs( $options['thumber']['width'] . 'x' . $options['thumber']['height'] );
+			DG_Thumb::purgeThumbs( null, null, false );
+			foreach ( $old_thumbs as $thumb ) {
+				if ( $thumb->isSuccess() ) {
+					$generator = $thumb->getGenerator();
+					if ( $generator == 'DG_Thumber::getGhostscriptThumbnail' ) {
+						$thumb->setGenerator( 'DG_GhostscriptThumber' );
+					} elseif ( $generator == 'DG_Thumber::getImagickThumbnail' ) {
+						$thumb->setGenerator( 'DG_ImagickThumber' );
+					} elseif ( $generator == 'DG_Thumber::getAudioVideoThumbnail' ) {
+						$thumb->setGenerator( 'DG_AudioVideoThumber' );
+					}
+
+					$thumb->save();
+				}
+			}
+		}
+	}
+
+	/**
+	 * Cleans up the mess created in the fourPointOne upgrade script. The
+	 * thumbnail files were removed, while the thumbnail DB entries were left.
+	 *
+	 * @param mixed[][] $options The options to be modified.
+	 */
+	private static function fourPointOnePointFive( &$options ) {
+		if ( version_compare( $options['meta']['version'], '4.1.5', '<' ) ) {
+			$thumbs = DG_Thumb::getThumbs( $options['thumber']['width'] . 'x' . $options['thumber']['height'] );
+			$ids = array();
+			foreach ( $thumbs as $thumb ) {
+				if ( $thumb->isSuccess() && !@file_exists( $thumb->getPath() ) ) {
+					$ids[] = $thumb->getPostId();
+				}
+			}
+
+			DG_Thumb::purgeThumbs( $ids );
 		}
 	}
 
@@ -369,7 +503,9 @@ class DG_Setup {
 		if ( ! current_user_can( 'activate_plugins' ) ) {
 			return;
 		}
-		check_admin_referer( 'bulk-plugins' );
+		// TODO: Unclear why this stopped working, but it is now never true,
+		// blocking uninstall, so has to go at least for now.
+		//check_admin_referer( 'bulk-plugins' );
 
 		$blogs = array( null );
 
@@ -388,17 +524,7 @@ class DG_Setup {
 	 * Runs when DG is uninstalled for an individual blog.
 	 */
 	private static function _uninstall( $blog ) {
-		$options = DG_Thumber::getOptions( $blog );
-		if ( is_null( $options ) ) {
-			return;
-		}
-
-		foreach ( $options['thumbs'] as $val ) {
-			if ( isset( $val['thumber'] ) ) {
-				@unlink( $val['thumb_path'] );
-			}
-		}
-
+		DG_Thumb::purgeThumbs( null, $blog );
 		DocumentGallery::deleteOptions( $blog );
 	}
 

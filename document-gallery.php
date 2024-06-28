@@ -3,16 +3,27 @@ defined( 'WPINC' ) OR exit;
 
 /*
   Plugin Name: Document Gallery
-  Plugin URI: http://wordpress.org/extend/plugins/document-gallery/
+  Plugin URI: https://wordpress.org/plugins/document-gallery/
   Description: Display non-images (and images) in gallery format on a page or post with the [dg] shortcode.
-  Version: 3.3.1
+  Version: 4.4.4
   Author: Dan Rossiter
   Author URI: http://danrossiter.org/
-  License: GPLv2
+  License: GPLv3
   Text Domain: document-gallery
  */
 
-define( 'DG_VERSION', '3.3.1' );
+define( 'DG_VERSION', '4.4.4' );
+
+if ( version_compare( PHP_VERSION, '5.3', '<' ) ) {
+	add_action( 'admin_notices', 'dg_php_lt_three' );
+	function dg_php_lt_three() { ?>
+		<div class="error"><p>
+			<?php printf( __( 'Document Gallery requires PHP &ge; 5.3. Your server is running version %s.', 'document-gallery' ), PHP_VERSION ); ?>
+		</p></div>
+	<?php }
+
+	return;
+}
 
 // define helper paths & URLs
 define( 'DG_BASENAME', plugin_basename( __FILE__ ) );
@@ -28,8 +39,7 @@ $dg_options = get_option( DG_OPTION_NAME, null );
 
 // core functionality
 include_once DG_PATH . 'inc/class-document-gallery.php';
-
-// DG general utility functions
+include_once DG_PATH . 'inc/class-thumb.php';
 include_once DG_PATH . 'inc/class-util.php';
 
 // logging functionality
@@ -43,21 +53,31 @@ add_action( 'wpmu_new_blog', array( 'DG_Setup', 'activateNewBlog' ) );
 register_uninstall_hook( __FILE__, array( 'DG_Setup', 'uninstall' ) );
 DG_Setup::maybeUpdate();
 
-// validate options if desired
-if ( $dg_options['validation'] ) {
-	add_action( 'init', array( 'DocumentGallery', 'addValidation' ) );
-}
+// ensure we don't allow invalid option structure
+add_action( 'init', array( 'DocumentGallery', 'addValidation' ) );
 
 // I18n
 add_action( 'plugins_loaded', array( 'DocumentGallery', 'loadTextDomain' ) );
 
+if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+	add_action( ( is_admin() ? 'admin' : 'wp' ) . '_footer', 'dg_debug_data' );
+	function dg_debug_data() {
+		echo '<!-- ' . PHP_EOL;
+		echo 'Document Gallery Count: ' . ( class_exists( 'DG_Gallery' ) ? count( DG_Gallery::getGalleries() ) : 0 ) . PHP_EOL;
+		echo ' -->' . PHP_EOL;
+	}
+}
+
 // cleanup cached data when thumbed attachment deleted
 include_once DG_PATH . 'inc/class-thumber.php';
-add_action( 'delete_attachment', array( 'DG_Thumber', 'deleteThumbMeta' ) );
+add_action( 'delete_attachment', array( 'DG_Thumb', 'cleanupAttachmentMeta' ) );
 
 if ( is_admin() ) {
 	// admin house keeping
 	include_once DG_PATH . 'admin/class-admin.php';
+
+	// AJAX handling
+	include_once DG_PATH . 'admin/class-ajax-handler.php';
 
 	// add links to plugin index
 	add_filter( 'plugin_action_links_' . DG_BASENAME, array( 'DG_Admin', 'addSettingsLink' ) );
@@ -70,12 +90,6 @@ if ( is_admin() ) {
 	add_action( 'add_meta_boxes', array( 'DG_Admin', 'addMetaBox' ) );
 	add_action( 'wp_ajax_dg_upload_thumb', array( 'DG_Admin', 'saveMetaBox' ) );
 
-	// Media Manager integration
-	add_action( 'admin_print_footer_scripts', array(
-		'DG_Admin',
-		'loadCustomTemplates'
-	) ); //wp_print_scripts || wp_footer
-
 	if ( DG_Admin::doRegisterSettings() ) {
 		add_action( 'admin_init', array( 'DG_Admin', 'registerSettings' ) );
 	}
@@ -85,6 +99,8 @@ if ( is_admin() ) {
 		add_action( 'wp_enqueue_scripts', array( 'DocumentGallery', 'enqueueGalleryStyle' ) );
 	}
 	add_action( 'wp_print_scripts', array( 'DocumentGallery', 'printCustomStyle' ) );
+
+	add_action( 'wp_enqueue_scripts', array( 'DocumentGallery', 'enqueueGalleryScript' ) );
 }
 
 // adds 'dg' shortcode

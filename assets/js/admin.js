@@ -25,7 +25,7 @@ jQuery(document).ready(function () {
     jQuery('select.limit_per_page').change(function () {
         jQuery(location).attr('href', '?' + jQuery.param(jQuery.extend(URL_params, {limit: this.value})));
     });
-    jQuery('#tab-Thumbnail').submit(function (event) {
+    jQuery('#thumbnail-management-tab').submit(function (event) {
         event.preventDefault();
         if (jQuery('.cb-ids:checked').length > 0) {
             var a = jQuery(this).attr('action');
@@ -53,7 +53,7 @@ jQuery(document).ready(function () {
         return false;
     });
 
-    jQuery('#tab-Advanced #options-dump').click(function () {
+    jQuery('#advanced-tab #options-dump').click(function () {
         jQuery(this).select();
     });
 
@@ -209,11 +209,12 @@ jQuery(document).ready(function () {
             if (f.type.indexOf('image/') == 0 && typeof dg_admin_vars.upload_limit != 'undefined' && f.size <= parseInt(dg_admin_vars.upload_limit)) {
                 var target, theRow = jQuery('[data-entry=' + entry + ']');
                 var formData = new FormData(theRow.closest('form')[0]);
-                if (typeof ajax_object != 'undefined' && typeof ajax_object.ajax_url != 'undefined') {
-                    target = ajax_object.ajax_url;
-                    formData.append('action', 'dg_upload_thumb');
+                var thumbMgmtTab = jQuery('#thumbnail-management-tab');
+                if (thumbMgmtTab.length) {
+                    target = thumbMgmtTab.attr('action');
                 } else {
-                    target = jQuery('#tab-Thumbnail').attr('action');
+                    target = ajaxurl;
+                    formData.append('action', 'dg_upload_thumb');
                 }
                 formData.append('document_gallery[entry]', entry);
                 formData.append('document_gallery[ajax]', 'true');
@@ -227,7 +228,7 @@ jQuery(document).ready(function () {
                     if (xhr.readyState == 4) {
                         if (xhr.status == 200 && xhr.responseText.indexOf("\n") == -1) {
                             jQuery(progressBarValue).parent().addClass('success');
-                            eval('var response = ' + xhr.responseText + ';');
+                            var response = jQuery.parseJSON(xhr.responseText);
                             if (response.result) {
                                 // check if generated thumbnail has the same url
                                 if (response.url === theImg.attr('src')) {
@@ -307,7 +308,7 @@ jQuery(document).ready(function () {
             if (cell.find('.editable-description').css('display') == 'none') {
                 return;
             }
-            cell.find('.editable-description').hide().after('<textarea>' + cell.find('.editable-description').text() + '</textarea>');
+            cell.find('.editable-description').hide().after('<textarea>' + cell.find('.editable-description').html() + '</textarea>');
             cell.find('textarea').focus();
         } else {
             return;
@@ -342,7 +343,7 @@ jQuery(document).ready(function () {
     jQuery('.edit-controls .dashicons-yes').click(function () {
         var cell = jQuery(this).closest('td');
         var entry = jQuery(this).closest('tr').data('entry');
-        var target = jQuery('#tab-Thumbnail').attr('action');
+        var target = jQuery('#thumbnail-management-tab').attr('action');
         var formData = new FormData(jQuery('[data-entry=' + entry + ']').closest('form')[0]);
         formData.append('document_gallery[entry]', entry);
         formData.append('document_gallery[ajax]', 'true');
@@ -358,7 +359,7 @@ jQuery(document).ready(function () {
         } else {
             return;
         }
-        if (newContent.val() == updateGoal.text()) {
+        if (newContent.val() == updateGoal.text() || ( cell.hasClass('column-description') && newContent.val() == updateGoal.html() )) {
             jQuery(this).next('.dashicons-no').click();
             return;
         }
@@ -369,9 +370,13 @@ jQuery(document).ready(function () {
                 cell.addClass('trans');
                 cell.find('.edit-controls').removeClass('waiting');
                 if (xhr.responseText.indexOf("\n") == -1) {
-                    eval('var response = ' + xhr.responseText + ';');
+                    var response = jQuery.parseJSON(xhr.responseText);
                     if (response.result) {
-                        updateGoal.text(newContent.val());
+                        if (cell.hasClass('column-description')) {
+                            updateGoal.html(newContent.val());
+                        } else {
+                            updateGoal.text(newContent.val());
+                        }
                         cell.find('.dashicons-no').click();
                         cell.addClass('responseSuccess').delay(2000).queue(function () {
                             jQuery(this).removeClass('responseSuccess').dequeue();

@@ -53,7 +53,7 @@ class DG_Logger {
 	 * @param int $skip How many lines to skip before returning rows.
 	 * @param int $limit Max number of lines to read.
 	 *
-	 * @return array|null The rows from the log file or null if failed to open log.
+	 * @return string[][]|null The rows from the log file or null if failed to open log.
 	 */
 	public static function readLog( $skip = 0, $limit = PHP_INT_MAX ) {
 		$ret = null;
@@ -114,10 +114,10 @@ class DG_Logger {
 		foreach ( $blogs as $blog ) {
 			$blog_num       = ! is_null( $blog ) ? $blog : get_current_blog_id();
 			$options        = self::getOptions( $blog );
-			$purge_interval = $options['purge_interval'] * DAY_IN_SECONDS;
+			$purge_time     = $time - $options['purge_interval'] * DAY_IN_SECONDS;
 
 			// purging is disabled for this blog
-			if ( $purge_interval <= 0 ) {
+			if ( $purge_time >= $time ) {
 				continue;
 			}
 
@@ -132,7 +132,7 @@ class DG_Logger {
 
 					// find the first non-expired entry
 					while ( ( $fields = fgetcsv( $fp ) ) !== false ) {
-						if ( ! is_null( $fields ) && $time > ( $fields[0] + $purge_interval ) ) {
+						if ( ! is_null( $fields ) && intval( $fields[0] ) >= $purge_time ) {
 							// we've reached the recent entries -- nothing beyond here will be removed
 							break;
 						}
@@ -176,7 +176,7 @@ class DG_Logger {
 	 *
 	 * @param int $blog ID of the blog to be retrieved in multisite env.
 	 *
-	 * @return array Logger options for the blog.
+	 * @return mixed[] Logger options for the blog.
 	 */
 	public static function getOptions( $blog = null ) {
 		$options = DocumentGallery::getOptions( $blog );
@@ -196,7 +196,7 @@ class DG_Logger {
 	}
 
 	/**
-	 * @param array $trace Array containing stack trace to be converted to string.
+	 * @param mixed[][] $trace Array containing stack trace to be converted to string.
 	 *
 	 * @return string The stack trace in human-readable form.
 	 */
@@ -226,8 +226,9 @@ class DG_Logger {
 			}
 
 			if ( isset( $node['function'] ) ) {
+				// only include args for first item in stack trace
 				$args = '';
-				if ( isset( $node['args'] ) ) {
+				if ( 1 === $i && isset( $node['args'] ) ) {
 					$args = implode( ', ', array_map( array( __CLASS__, 'print_r' ), $node['args'] ) );
 				}
 
@@ -242,12 +243,12 @@ class DG_Logger {
 	/**
 	 * Wraps print_r passing true for the return argument.
 	 *
-	 * @param unknown $v Value to be printed.
+	 * @param mixed $v Value to be printed.
 	 *
 	 * @return string Printed value.
 	 */
 	private static function print_r( $v ) {
-		return print_r( $v, true );
+		return preg_replace( '/\s+/', ' ', print_r( $v, true ) );
 	}
 
 	/**
@@ -294,12 +295,12 @@ class DG_LogLevel {
 	}
 
 	/**
-	 * @var array Backs the getter.
+	 * @var int[] Backs the getter.
 	 */
 	private static $levels = null;
 
 	/**
-	 * @return array Associative array containing all log level names mapped to their int value.
+	 * @return int[] Associative array containing all log level names mapped to their int value.
 	 */
 	public static function getLogLevels() {
 		if ( is_null( self::$levels ) ) {
